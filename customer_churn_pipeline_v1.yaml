@@ -1,0 +1,410 @@
+# Name: customer-churn-pipeline-assignment10
+# Description: Pipeline for Customer Churn Prediction
+# Inputs:
+#    drop_missing_vals: bool [Default: False]
+#    n_estimators: int [Default: 100.0]
+#    random_state: int [Default: 3.0]
+#    test_size: float [Default: 0.2]
+components:
+  comp-evaluate-churn-model:
+    executorLabel: exec-evaluate-churn-model
+    inputDefinitions:
+      artifacts:
+        X_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        model_input:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        y_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-load-churn-data:
+    executorLabel: exec-load-churn-data
+    inputDefinitions:
+      parameters:
+        drop_missing_vals:
+          parameterType: BOOLEAN
+    outputDefinitions:
+      artifacts:
+        churn_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-churn-model:
+    executorLabel: exec-train-churn-model
+    inputDefinitions:
+      artifacts:
+        X_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        n_estimators:
+          parameterType: NUMBER_INTEGER
+        random_state:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        model_output:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-train-test-split-churn:
+    executorLabel: exec-train-test-split-churn
+    inputDefinitions:
+      artifacts:
+        input_churn_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        random_state:
+          parameterType: NUMBER_INTEGER
+        test_size:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        X_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        X_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-evaluate-churn-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_churn_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas==1.5.3'\
+          \ 'numpy==1.23.5' 'scikit-learn==1.2.2' 'joblib==1.2.0' && \"$0\" \"$@\"\
+          \n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_churn_model(\n    X_test: Input[Dataset],  # Renamed\
+          \ back\n    y_test: Input[Dataset],  # Renamed back\n    model_input: Input[Model],\
+          \ # Keep this name for the input model artifact\n    metrics: Output[Metrics]\
+          \   # Use KFP Metrics artifact\n):\n    \"\"\"Evaluates the trained model\
+          \ and logs metrics.\"\"\"\n    import pandas as pd\n    from sklearn.metrics\
+          \ import accuracy_score, precision_score, recall_score, f1_score\n    import\
+          \ joblib\n\n    print(f\"Loading test data: X from {X_test.path}, y from\
+          \ {y_test.path}\")\n    # Use the input parameter names to load data\n \
+          \   X_test_df = pd.read_csv(X_test.path)\n    y_test_df = pd.read_csv(y_test.path)\n\
+          \    y_test_series = y_test_df['Exited'] # Extract the Series\n\n    print(f\"\
+          Loading model from: {model_input.path}\")\n    # Load the model using joblib\n\
+          \    rf_model = joblib.load(model_input.path)\n\n    print(\"Evaluating\
+          \ model performance...\")\n    # Make predictions on the test set\n    y_pred\
+          \ = rf_model.predict(X_test_df)\n\n    # Calculate evaluation metrics\n\
+          \    acc = accuracy_score(y_test_series, y_pred)\n    precision = precision_score(y_test_series,\
+          \ y_pred)\n    recall = recall_score(y_test_series, y_pred)\n    f1 = f1_score(y_test_series,\
+          \ y_pred)\n\n    print(f\"Accuracy: {acc:.4f}\")\n    print(f\"Precision:\
+          \ {precision:.4f}\")\n    print(f\"Recall: {recall:.4f}\")\n    print(f\"\
+          F1-score: {f1:.4f}\")\n\n    # Log metrics to KFP UI using Output[Metrics]\n\
+          \    metrics.log_metric(\"accuracy\", round(acc, 4))\n    metrics.log_metric(\"\
+          precision\", round(precision, 4))\n    metrics.log_metric(\"recall\", round(recall,\
+          \ 4))\n    metrics.log_metric(\"f1_score\", round(f1, 4))\n\n"
+        image: python:3.10-slim
+    exec-load-churn-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - load_churn_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas==1.5.3'\
+          \ 'numpy==1.23.5' 'scikit-learn==1.2.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef load_churn_data(drop_missing_vals: bool, churn_dataset: Output[Dataset]):\n\
+          \    \"\"\"Loads churn data, performs mapping, and optionally drops NAs.\"\
+          \"\"\n    import pandas as pd\n    import numpy as np # Needed if dropna\
+          \ is used, though unlikely here\n\n    print(\"Loading and preprocessing\
+          \ data...\")\n    # Load Customer Churn dataset\n    df = pd.read_csv(\"\
+          https://raw.githubusercontent.com/MLOPS-test/test-scripts/refs/heads/main/mlops-ast10/Churn_Modeling.csv\"\
+          )\n    print(f\"Initial data shape: {df.shape}\")\n\n    # Define target\
+          \ variable and features (matching train_model.py)\n    X = df[[\"CreditScore\"\
+          , \"Geography\", \"Gender\", \"Age\", \"Tenure\", \"Balance\", \"NumOfProducts\"\
+          , \"IsActiveMember\", \"EstimatedSalary\"]].copy()\n    y = df[[\"Exited\"\
+          ]] # Keep as DataFrame for easy merge\n\n    print(\"Mapping categorical\
+          \ features...\")\n    # Handling category labels present in `Geography`\
+          \ and `Gender` columns\n    geography_mapping = {'France': 0, 'Spain': 1,\
+          \ 'Germany': 2}\n    gender_mapping = {'Female': 0, 'Male': 1}\n\n    #\
+          \ Map categorical values to numbers using respective dictionaries\n    X['Geography']\
+          \ = X['Geography'].map(geography_mapping)\n    X['Gender'] = X['Gender'].map(gender_mapping)\n\
+          \    print(\"Mapping complete.\")\n\n    # Combine features and target for\
+          \ output dataset\n    transformed_df = X.copy()\n    transformed_df['Exited']\
+          \ = y['Exited'] # Add the target column\n\n    if drop_missing_vals:\n \
+          \       print(\"Checking for and dropping missing values...\")\n       \
+          \ initial_rows = len(transformed_df)\n        transformed_df = transformed_df.dropna()\n\
+          \        rows_dropped = initial_rows - len(transformed_df)\n        print(f\"\
+          Dropped {rows_dropped} rows with missing values.\")\n    else:\n       \
+          \ print(\"Skipping drop missing values step.\")\n\n    print(f\"Final processed\
+          \ data shape: {transformed_df.shape}\")\n    # Save the processed data\n\
+          \    transformed_df.to_csv(churn_dataset.path, index=False)\n    print(f\"\
+          Processed data saved to: {churn_dataset.path}\")\n\n"
+        image: python:3.10-slim
+    exec-train-churn-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_churn_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas==1.5.3'\
+          \ 'numpy==1.23.5' 'scikit-learn==1.2.2' 'joblib==1.2.0' && \"$0\" \"$@\"\
+          \n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_churn_model(\n    X_train: Input[Dataset], # Renamed back\n\
+          \    y_train: Input[Dataset], # Renamed back\n    model_output: Output[Model],\n\
+          \    n_estimators: int,\n    random_state: int,\n):\n    \"\"\"Trains a\
+          \ RandomForestClassifier model.\"\"\"\n    import pandas as pd\n    from\
+          \ sklearn.ensemble import RandomForestClassifier\n    import joblib\n\n\
+          \    print(f\"Loading training data: X from {X_train.path}, y from {y_train.path}\"\
+          )\n    # Use the input parameter names to load data\n    X_train_df = pd.read_csv(X_train.path)\n\
+          \    y_train_df = pd.read_csv(y_train.path)\n    y_train_series = y_train_df['Exited']\
+          \ # Extract the Series\n\n    print(f\"Training RandomForestClassifier with\
+          \ n_estimators={n_estimators}, random_state={random_state}\")\n    # Create\
+          \ Random Forest Classifier model\n    rf_model = RandomForestClassifier(n_estimators=n_estimators,\
+          \ random_state=random_state)\n\n    # Train the model (using .values.ravel()\
+          \ for y_train as in train_model.py)\n    rf_model.fit(X_train_df, y_train_series.values.ravel())\n\
+          \    print(\"Model training complete.\")\n\n    # Save the trained model\
+          \ using joblib\n    joblib.dump(rf_model, model_output.path)\n    print(f\"\
+          Trained model saved to: {model_output.path}\")\n\n"
+        image: python:3.10-slim
+    exec-train-test-split-churn:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_test_split_churn
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pandas==1.5.3'\
+          \ 'numpy==1.23.5' 'scikit-learn==1.2.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_test_split_churn(\n    input_churn_dataset: Input[Dataset],\n\
+          \    X_train: Output[Dataset], # Renamed back\n    X_test: Output[Dataset],\
+          \  # Renamed back\n    y_train: Output[Dataset], # Renamed back\n    y_test:\
+          \ Output[Dataset],  # Renamed back\n    test_size: float,\n    random_state:\
+          \ int,\n):\n    \"\"\"Splits the data into training and testing sets with\
+          \ stratification.\"\"\"\n    import pandas as pd\n    from sklearn.model_selection\
+          \ import train_test_split\n\n    print(f\"Loading processed data from: {input_churn_dataset.path}\"\
+          )\n    df = pd.read_csv(input_churn_dataset.path)\n    print(f\"Data shape\
+          \ for splitting: {df.shape}\")\n\n    if 'Exited' not in df.columns:\n \
+          \       raise ValueError(\"Target column 'Exited' not found in the input\
+          \ dataset.\")\n\n    print(f\"Splitting data with test_size={test_size},\
+          \ random_state={random_state}, stratify=True\")\n    # Separate features\
+          \ (X) and target (y)\n    X_features = df.drop('Exited', axis=1)\n    y_target\
+          \ = df['Exited']\n\n    # Perform train-test split using stratification\
+          \ (as in train_model.py)\n    X_train_split, X_test_split, y_train_split,\
+          \ y_test_split = train_test_split(\n        X_features, y_target,\n    \
+          \    test_size=test_size,\n        random_state=random_state,\n        stratify=y_target\
+          \  # Crucial for classification balance\n    )\n    print(f\"X_train shape:\
+          \ {X_train_split.shape}, y_train shape: {y_train_split.shape}\")\n    print(f\"\
+          X_test shape: {X_test_split.shape}, y_test shape: {y_test_split.shape}\"\
+          )\n\n    # Save the split datasets as CSV files using the output parameter\
+          \ paths\n    X_train_split.to_csv(X_train.path, index=False)\n    X_test_split.to_csv(X_test.path,\
+          \ index=False)\n    # Save y as DataFrame to keep header, consistent with\
+          \ load in next step\n    pd.DataFrame(y_train_split).to_csv(y_train.path,\
+          \ index=False)\n    pd.DataFrame(y_test_split).to_csv(y_test.path, index=False)\n\
+          \n    print(f\"X_train saved to: {X_train.path}\")\n    print(f\"X_test\
+          \ saved to: {X_test.path}\")\n    print(f\"y_train saved to: {y_train.path}\"\
+          )\n    print(f\"y_test saved to: {y_test.path}\")\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: Pipeline for Customer Churn Prediction
+  name: customer-churn-pipeline-assignment10
+root:
+  dag:
+    tasks:
+      evaluate-churn-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-churn-model
+        dependentTasks:
+        - train-churn-model
+        - train-test-split-churn
+        inputs:
+          artifacts:
+            X_test:
+              taskOutputArtifact:
+                outputArtifactKey: X_test
+                producerTask: train-test-split-churn
+            model_input:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: train-churn-model
+            y_test:
+              taskOutputArtifact:
+                outputArtifactKey: y_test
+                producerTask: train-test-split-churn
+        taskInfo:
+          name: evaluate-churn-model
+      load-churn-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-load-churn-data
+        inputs:
+          parameters:
+            drop_missing_vals:
+              componentInputParameter: drop_missing_vals
+        taskInfo:
+          name: load-churn-data
+      train-churn-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-churn-model
+        dependentTasks:
+        - train-test-split-churn
+        inputs:
+          artifacts:
+            X_train:
+              taskOutputArtifact:
+                outputArtifactKey: X_train
+                producerTask: train-test-split-churn
+            y_train:
+              taskOutputArtifact:
+                outputArtifactKey: y_train
+                producerTask: train-test-split-churn
+          parameters:
+            n_estimators:
+              componentInputParameter: n_estimators
+            random_state:
+              componentInputParameter: random_state
+        taskInfo:
+          name: train-churn-model
+      train-test-split-churn:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-test-split-churn
+        dependentTasks:
+        - load-churn-data
+        inputs:
+          artifacts:
+            input_churn_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: churn_dataset
+                producerTask: load-churn-data
+          parameters:
+            random_state:
+              componentInputParameter: random_state
+            test_size:
+              componentInputParameter: test_size
+        taskInfo:
+          name: train-test-split-churn
+  inputDefinitions:
+    parameters:
+      drop_missing_vals:
+        defaultValue: false
+        isOptional: true
+        parameterType: BOOLEAN
+      n_estimators:
+        defaultValue: 100.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      random_state:
+        defaultValue: 3.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      test_size:
+        defaultValue: 0.2
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.12.1
